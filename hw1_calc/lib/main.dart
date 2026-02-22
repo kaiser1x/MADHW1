@@ -24,25 +24,154 @@ class CalculatorTemplatePage extends StatefulWidget {
 }
 
 class _CalculatorTemplatePageState extends State<CalculatorTemplatePage> {
-  // Placeholder display text (no real calculation yet)
   String display = "0";
 
-  // Just a template handler so the buttons "do something" visually.
-  // You can remove this body later when you add real functionality.
+  // For + and −
+  double? _first;
+  String? _op; // "+" or "−"
+  bool _startNewNumber = true; // when true, next digit replaces display
+
+  void _clearAll() {
+    display = "0";
+    _first = null;
+    _op = null;
+    _startNewNumber = true;
+  }
+
+  double _asNumber(String s) {
+    // Safe parse for display text
+    return double.tryParse(s) ?? 0.0;
+  }
+
+  String _formatNumber(double n) {
+    // Remove trailing .0 (e.g., 8.0 -> "8")
+    if (n % 1 == 0) return n.toInt().toString();
+    return n.toString();
+  }
+
+  void _backspace() {
+    if (_startNewNumber) return;
+
+    if (display.length <= 1) {
+      display = "0";
+      _startNewNumber = true;
+      return;
+    }
+
+    display = display.substring(0, display.length - 1);
+
+    // If user deletes down to "-" or empty-ish, reset nicely
+    if (display == "-" || display.isEmpty) {
+      display = "0";
+      _startNewNumber = true;
+    }
+  }
+
+  void _appendDigit(String digit) {
+    if (_startNewNumber) {
+      display = digit;
+      _startNewNumber = false;
+      return;
+    }
+
+    if (display == "0") {
+      display = digit;
+    } else {
+      display += digit;
+    }
+  }
+
+  void _appendDot() {
+    if (_startNewNumber) {
+      display = "0.";
+      _startNewNumber = false;
+      return;
+    }
+
+    // Prevent multiple dots in the current number
+    if (!display.contains('.')) {
+      display += '.';
+    }
+  }
+
+  void _setOperator(String op) {
+    // Only implement + and − for now
+    if (op != "+" && op != "−") return;
+
+    // If we already have an operator and user presses another operator
+    // (and they have typed a second number), compute first to chain operations.
+    if (_first != null && _op != null && !_startNewNumber) {
+      _computeEquals();
+    }
+
+    _first ??= _asNumber(display);
+    _op = op;
+    _startNewNumber = true;
+  }
+
+  void _computeEquals() {
+    if (_first == null || _op == null) return;
+
+    final second = _asNumber(display);
+    double result = _first!;
+
+    if (_op == "+") {
+      result = _first! + second;
+    } else if (_op == "−") {
+      result = _first! - second;
+    }
+
+    display = _formatNumber(result);
+
+    // Reset operator state after equals
+    _first = null;
+    _op = null;
+    _startNewNumber = true;
+  }
+
   void onKeyTap(String key) {
     setState(() {
-      // Simple placeholder behavior:
-      // - If display is "0", replace it
-      // - Otherwise append the key
-      if (display == "0") {
-        display = key;
-      } else {
-        display += key;
+      // Clear
+      if (key == "C") {
+        _clearAll();
+        return;
+      }
+
+      // Backspace
+      if (key == "⌫") {
+        _backspace();
+        return;
+      }
+
+      // Equals
+      if (key == "=") {
+        _computeEquals();
+        return;
+      }
+
+      // Dot
+      if (key == ".") {
+        _appendDot();
+        return;
+      }
+
+      // Operators (+ and − only)
+      if (key == "+" || key == "−") {
+        _setOperator(key);
+        return;
+      }
+
+      // Ignore other operators for now (÷, ×, %, etc.)
+      if (key == "÷" || key == "×" || key == "%") {
+        return;
+      }
+
+      // Digits 0-9
+      if (RegExp(r'^[0-9]$').hasMatch(key)) {
+        _appendDigit(key);
+        return;
       }
     });
-
-    // Optional: print tap to console for debugging
-    // debugPrint("Tapped: $key");
   }
 
   @override
@@ -202,7 +331,6 @@ class _CalcButton extends StatelessWidget {
       child: GestureDetector(
         onTap: () => onTap(label),
         child: Container(
-          margin: const EdgeInsets.all(0),
           decoration: BoxDecoration(
             color: bg,
             borderRadius: BorderRadius.circular(16),
