@@ -26,10 +26,9 @@ class CalculatorTemplatePage extends StatefulWidget {
 class _CalculatorTemplatePageState extends State<CalculatorTemplatePage> {
   String display = "0";
 
-  // For + and −
   double? _first;
-  String? _op; // "+" or "−"
-  bool _startNewNumber = true; // when true, next digit replaces display
+  String? _op; // "+", "−", "×", "÷"
+  bool _startNewNumber = true;
 
   void _clearAll() {
     display = "0";
@@ -38,15 +37,18 @@ class _CalculatorTemplatePageState extends State<CalculatorTemplatePage> {
     _startNewNumber = true;
   }
 
-  double _asNumber(String s) {
-    // Safe parse for display text
-    return double.tryParse(s) ?? 0.0;
-  }
+  double _asNumber(String s) => double.tryParse(s) ?? 0.0;
 
   String _formatNumber(double n) {
-    // Remove trailing .0 (e.g., 8.0 -> "8")
+    // Handle NaN/Infinity (e.g., divide by 0)
+    if (n.isNaN || n.isInfinite) return "Error";
+
+    // Remove trailing .0 when it's an integer
     if (n % 1 == 0) return n.toInt().toString();
-    return n.toString();
+
+    // Trim tiny floating errors a bit by limiting length if needed
+    final str = n.toString();
+    return str.length > 14 ? n.toStringAsPrecision(12) : str;
   }
 
   void _backspace() {
@@ -60,7 +62,6 @@ class _CalculatorTemplatePageState extends State<CalculatorTemplatePage> {
 
     display = display.substring(0, display.length - 1);
 
-    // If user deletes down to "-" or empty-ish, reset nicely
     if (display == "-" || display.isEmpty) {
       display = "0";
       _startNewNumber = true;
@@ -88,22 +89,52 @@ class _CalculatorTemplatePageState extends State<CalculatorTemplatePage> {
       return;
     }
 
-    // Prevent multiple dots in the current number
     if (!display.contains('.')) {
       display += '.';
     }
   }
 
-  void _setOperator(String op) {
-    // Only implement + and − for now
-    if (op != "+" && op != "−") return;
+  double _applyOp(double a, double b, String op) {
+    switch (op) {
+      case '+':
+        return a + b;
+      case '−':
+        return a - b;
+      case '×':
+        return a * b;
+      case '÷':
+        // avoid crashing; show Error if dividing by 0
+        if (b == 0) return double.nan;
+        return a / b;
+      default:
+        return b;
+    }
+  }
 
-    // If we already have an operator and user presses another operator
-    // (and they have typed a second number), compute first to chain operations.
+  void _setOperator(String op) {
+    // If we already have a pending operator and the user has typed a second number,
+    // compute immediately so you can chain operations.
     if (_first != null && _op != null && !_startNewNumber) {
-      _computeEquals();
+      final second = _asNumber(display);
+      final result = _applyOp(_first!, second, _op!);
+
+      display = _formatNumber(result);
+
+      // If error happened (divide by 0), reset state after showing Error
+      if (display == "Error") {
+        _first = null;
+        _op = null;
+        _startNewNumber = true;
+        return;
+      }
+
+      _first = _asNumber(display);
+      _startNewNumber = true;
+      _op = op;
+      return;
     }
 
+    // First time pressing an operator
     _first ??= _asNumber(display);
     _op = op;
     _startNewNumber = true;
@@ -113,17 +144,11 @@ class _CalculatorTemplatePageState extends State<CalculatorTemplatePage> {
     if (_first == null || _op == null) return;
 
     final second = _asNumber(display);
-    double result = _first!;
-
-    if (_op == "+") {
-      result = _first! + second;
-    } else if (_op == "−") {
-      result = _first! - second;
-    }
+    final result = _applyOp(_first!, second, _op!);
 
     display = _formatNumber(result);
 
-    // Reset operator state after equals
+    // Reset after equals
     _first = null;
     _op = null;
     _startNewNumber = true;
@@ -131,40 +156,34 @@ class _CalculatorTemplatePageState extends State<CalculatorTemplatePage> {
 
   void onKeyTap(String key) {
     setState(() {
-      // Clear
       if (key == "C") {
         _clearAll();
         return;
       }
 
-      // Backspace
       if (key == "⌫") {
         _backspace();
         return;
       }
 
-      // Equals
       if (key == "=") {
         _computeEquals();
         return;
       }
 
-      // Dot
       if (key == ".") {
         _appendDot();
         return;
       }
 
-      // Operators (+ and − only)
-      if (key == "+" || key == "−") {
+      // Operators: now supports +, −, ×, ÷
+      if (key == "+" || key == "−" || key == "×" || key == "÷") {
         _setOperator(key);
         return;
       }
 
-      // Ignore other operators for now (÷, ×, %, etc.)
-      if (key == "÷" || key == "×" || key == "%") {
-        return;
-      }
+      // Ignore % for now (optional future feature)
+      if (key == "%") return;
 
       // Digits 0-9
       if (RegExp(r'^[0-9]$').hasMatch(key)) {
@@ -273,7 +292,6 @@ class _CalculatorTemplatePageState extends State<CalculatorTemplatePage> {
                     Expanded(
                       child: Row(
                         children: [
-                          // Make "0" wider like a real calculator
                           Expanded(
                             flex: 2,
                             child: _CalcButton(label: '0', onTap: onKeyTap),
