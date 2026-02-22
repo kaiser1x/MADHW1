@@ -2,22 +2,58 @@ import 'package:flutter/material.dart';
 
 void main() => runApp(const CalculatorTemplateApp());
 
-class CalculatorTemplateApp extends StatelessWidget {
+class CalculatorTemplateApp extends StatefulWidget {
   const CalculatorTemplateApp({super.key});
 
   @override
+  State<CalculatorTemplateApp> createState() => _CalculatorTemplateAppState();
+}
+
+class _CalculatorTemplateAppState extends State<CalculatorTemplateApp> {
+  bool _isDark = false;
+
+  void _toggleTheme() => setState(() => _isDark = !_isDark);
+
+  @override
   Widget build(BuildContext context) {
+    final lightTheme = ThemeData(
+      useMaterial3: true,
+      brightness: Brightness.light,
+      colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+    );
+
+    final darkTheme = ThemeData(
+      useMaterial3: true,
+      brightness: Brightness.dark,
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: Colors.blue,
+        brightness: Brightness.dark,
+      ),
+    );
+
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Calculator Template',
-      theme: ThemeData(useMaterial3: true),
-      home: const CalculatorTemplatePage(),
+      title: 'Calculator',
+      theme: lightTheme,
+      darkTheme: darkTheme,
+      themeMode: _isDark ? ThemeMode.dark : ThemeMode.light,
+      home: CalculatorTemplatePage(
+        isDark: _isDark,
+        onToggleTheme: _toggleTheme,
+      ),
     );
   }
 }
 
 class CalculatorTemplatePage extends StatefulWidget {
-  const CalculatorTemplatePage({super.key});
+  final bool isDark;
+  final VoidCallback onToggleTheme;
+
+  const CalculatorTemplatePage({
+    super.key,
+    required this.isDark,
+    required this.onToggleTheme,
+  });
 
   @override
   State<CalculatorTemplatePage> createState() => _CalculatorTemplatePageState();
@@ -25,13 +61,22 @@ class CalculatorTemplatePage extends StatefulWidget {
 
 class _CalculatorTemplatePageState extends State<CalculatorTemplatePage> {
   String display = "0";
+  String? errorMessage;
+
+  // NEW: shows what user clicked (expression / history line)
+  String expression = "";
 
   double? _first;
   String? _op; // "+", "−", "×", "÷"
   bool _startNewNumber = true;
 
+  void _setError(String msg) => errorMessage = msg;
+  void _clearError() => errorMessage = null;
+
   void _clearAll() {
     display = "0";
+    errorMessage = null;
+    expression = "";
     _first = null;
     _op = null;
     _startNewNumber = true;
@@ -40,13 +85,8 @@ class _CalculatorTemplatePageState extends State<CalculatorTemplatePage> {
   double _asNumber(String s) => double.tryParse(s) ?? 0.0;
 
   String _formatNumber(double n) {
-    // Handle NaN/Infinity (e.g., divide by 0)
     if (n.isNaN || n.isInfinite) return "Error";
-
-    // Remove trailing .0 when it's an integer
     if (n % 1 == 0) return n.toInt().toString();
-
-    // Trim tiny floating errors a bit by limiting length if needed
     final str = n.toString();
     return str.length > 14 ? n.toStringAsPrecision(12) : str;
   }
@@ -66,31 +106,35 @@ class _CalculatorTemplatePageState extends State<CalculatorTemplatePage> {
       display = "0";
       _startNewNumber = true;
     }
+
+    // Update expression preview while typing the 2nd number
+    _syncExpressionPreview();
   }
 
   void _appendDigit(String digit) {
     if (_startNewNumber) {
       display = digit;
       _startNewNumber = false;
-      return;
-    }
-
-    if (display == "0") {
+    } else if (display == "0") {
       display = digit;
     } else {
       display += digit;
     }
+
+    _syncExpressionPreview();
   }
 
   void _appendDot() {
     if (_startNewNumber) {
       display = "0.";
       _startNewNumber = false;
+      _syncExpressionPreview();
       return;
     }
 
     if (!display.contains('.')) {
       display += '.';
+      _syncExpressionPreview();
     }
   }
 
@@ -103,7 +147,6 @@ class _CalculatorTemplatePageState extends State<CalculatorTemplatePage> {
       case '×':
         return a * b;
       case '÷':
-        // avoid crashing; show Error if dividing by 0
         if (b == 0) return double.nan;
         return a / b;
       default:
@@ -111,17 +154,54 @@ class _CalculatorTemplatePageState extends State<CalculatorTemplatePage> {
     }
   }
 
+  // NEW: Keeps expression line in sync while user types
+  void _syncExpressionPreview() {
+    if (_first == null && _op == null) {
+      // No operator yet -> just show the current typed number (optional)
+      expression = display == "0" ? "" : display;
+      return;
+    }
+
+    if (_first != null && _op != null) {
+      if (_startNewNumber) {
+        // Operator chosen, user hasn't started second number yet
+        expression = "${_formatNumber(_first!)} $_op";
+      } else {
+        // User typing second number
+        expression = "${_formatNumber(_first!)} $_op $display";
+      }
+    }
+  }
+
   void _setOperator(String op) {
-    // If we already have a pending operator and the user has typed a second number,
-    // compute immediately so you can chain operations.
+    // If user hits operator twice in a row, just replace operator
+    if (_startNewNumber && _op != null) {
+      _op = op;
+      _syncExpressionPreview();
+      return;
+    }
+
+    // If we have a pending operation and user has entered second number,
+    // compute first (chain), then store result as new first.
     if (_first != null && _op != null && !_startNewNumber) {
       final second = _asNumber(display);
-      final result = _applyOp(_first!, second, _op!);
 
+      if (_op == "÷" && second == 0) {
+        display = "Error";
+        _setError("Cannot divide by 0");
+        expression = "${_formatNumber(_first!)} $_op $second =";
+        _first = null;
+        _op = null;
+        _startNewNumber = true;
+        return;
+      }
+
+      final result = _applyOp(_first!, second, _op!);
       display = _formatNumber(result);
 
-      // If error happened (divide by 0), reset state after showing Error
       if (display == "Error") {
+        _setError("Invalid operation");
+        expression = "${_formatNumber(_first!)} $_op $second =";
         _first = null;
         _op = null;
         _startNewNumber = true;
@@ -129,26 +209,61 @@ class _CalculatorTemplatePageState extends State<CalculatorTemplatePage> {
       }
 
       _first = _asNumber(display);
-      _startNewNumber = true;
       _op = op;
+      _startNewNumber = true;
+      _syncExpressionPreview();
       return;
     }
 
-    // First time pressing an operator
+    // First time picking operator
     _first ??= _asNumber(display);
     _op = op;
     _startNewNumber = true;
+    _syncExpressionPreview();
   }
 
   void _computeEquals() {
-    if (_first == null || _op == null) return;
+    if (_op == null) {
+      _setError("Choose an operator first");
+      // Show whatever they typed so far
+      expression = display == "0" ? "" : display;
+      return;
+    }
+
+    if (_startNewNumber) {
+      _setError("Enter a second number");
+      _syncExpressionPreview();
+      return;
+    }
+
+    if (_first == null) {
+      _setError("Missing first number");
+      _syncExpressionPreview();
+      return;
+    }
 
     final second = _asNumber(display);
+
+    if (_op == "÷" && second == 0) {
+      display = "Error";
+      _setError("Cannot divide by 0");
+      expression = "${_formatNumber(_first!)} $_op $second =";
+      _first = null;
+      _op = null;
+      _startNewNumber = true;
+      return;
+    }
+
     final result = _applyOp(_first!, second, _op!);
 
+    // Show full expression, then result in display
+    expression = "${_formatNumber(_first!)} $_op $second =";
     display = _formatNumber(result);
 
-    // Reset after equals
+    if (display == "Error") {
+      _setError("Invalid operation");
+    }
+
     _first = null;
     _op = null;
     _startNewNumber = true;
@@ -156,6 +271,8 @@ class _CalculatorTemplatePageState extends State<CalculatorTemplatePage> {
 
   void onKeyTap(String key) {
     setState(() {
+      if (key != "=" && key != "C") _clearError();
+
       if (key == "C") {
         _clearAll();
         return;
@@ -176,16 +293,16 @@ class _CalculatorTemplatePageState extends State<CalculatorTemplatePage> {
         return;
       }
 
-      // Operators: now supports +, −, ×, ÷
       if (key == "+" || key == "−" || key == "×" || key == "÷") {
         _setOperator(key);
         return;
       }
 
-      // Ignore % for now (optional future feature)
-      if (key == "%") return;
+      if (key == "%") {
+        _setError("Percent not implemented yet");
+        return;
+      }
 
-      // Digits 0-9
       if (RegExp(r'^[0-9]$').hasMatch(key)) {
         _appendDigit(key);
         return;
@@ -196,11 +313,19 @@ class _CalculatorTemplatePageState extends State<CalculatorTemplatePage> {
   @override
   Widget build(BuildContext context) {
     const gap = 10.0;
+    final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Calculator (Template)'),
+        title: const Text('Calculator'),
         centerTitle: true,
+        actions: [
+          IconButton(
+            tooltip: widget.isDark ? "Switch to Light" : "Switch to Dark",
+            onPressed: widget.onToggleTheme,
+            icon: Icon(widget.isDark ? Icons.dark_mode : Icons.light_mode),
+          ),
+        ],
       ),
       body: SafeArea(
         child: Padding(
@@ -210,20 +335,50 @@ class _CalculatorTemplatePageState extends State<CalculatorTemplatePage> {
               // DISPLAY
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(16),
-                  color: Colors.black12,
+                  color: cs.surfaceContainerHighest.withOpacity(0.8),
                 ),
-                child: Text(
-                  display,
-                  textAlign: TextAlign.right,
-                  style: const TextStyle(
-                    fontSize: 48,
-                    fontWeight: FontWeight.w600,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    // NEW: expression/history line
+                    Text(
+                      expression,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: cs.onSurface.withOpacity(0.65),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+
+                    Text(
+                      display,
+                      textAlign: TextAlign.right,
+                      style: TextStyle(
+                        fontSize: 48,
+                        fontWeight: FontWeight.w600,
+                        color: cs.onSurface,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 6),
+
+                    if (errorMessage != null)
+                      Text(
+                        errorMessage!,
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: cs.error,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                  ],
                 ),
               ),
 
@@ -236,13 +391,13 @@ class _CalculatorTemplatePageState extends State<CalculatorTemplatePage> {
                     Expanded(
                       child: Row(
                         children: [
-                          _CalcButton(label: 'C', onTap: onKeyTap),
+                          CalcButton(label: 'C', onTap: onKeyTap),
                           const SizedBox(width: gap),
-                          _CalcButton(label: '⌫', onTap: onKeyTap),
+                          CalcButton(label: '⌫', onTap: onKeyTap),
                           const SizedBox(width: gap),
-                          _CalcButton(label: '%', onTap: onKeyTap),
+                          CalcButton(label: '%', onTap: onKeyTap),
                           const SizedBox(width: gap),
-                          _CalcButton(label: '÷', onTap: onKeyTap, isOp: true),
+                          CalcButton(label: '÷', onTap: onKeyTap, isOp: true),
                         ],
                       ),
                     ),
@@ -250,13 +405,13 @@ class _CalculatorTemplatePageState extends State<CalculatorTemplatePage> {
                     Expanded(
                       child: Row(
                         children: [
-                          _CalcButton(label: '7', onTap: onKeyTap),
+                          CalcButton(label: '7', onTap: onKeyTap),
                           const SizedBox(width: gap),
-                          _CalcButton(label: '8', onTap: onKeyTap),
+                          CalcButton(label: '8', onTap: onKeyTap),
                           const SizedBox(width: gap),
-                          _CalcButton(label: '9', onTap: onKeyTap),
+                          CalcButton(label: '9', onTap: onKeyTap),
                           const SizedBox(width: gap),
-                          _CalcButton(label: '×', onTap: onKeyTap, isOp: true),
+                          CalcButton(label: '×', onTap: onKeyTap, isOp: true),
                         ],
                       ),
                     ),
@@ -264,13 +419,13 @@ class _CalculatorTemplatePageState extends State<CalculatorTemplatePage> {
                     Expanded(
                       child: Row(
                         children: [
-                          _CalcButton(label: '4', onTap: onKeyTap),
+                          CalcButton(label: '4', onTap: onKeyTap),
                           const SizedBox(width: gap),
-                          _CalcButton(label: '5', onTap: onKeyTap),
+                          CalcButton(label: '5', onTap: onKeyTap),
                           const SizedBox(width: gap),
-                          _CalcButton(label: '6', onTap: onKeyTap),
+                          CalcButton(label: '6', onTap: onKeyTap),
                           const SizedBox(width: gap),
-                          _CalcButton(label: '−', onTap: onKeyTap, isOp: true),
+                          CalcButton(label: '−', onTap: onKeyTap, isOp: true),
                         ],
                       ),
                     ),
@@ -278,13 +433,13 @@ class _CalculatorTemplatePageState extends State<CalculatorTemplatePage> {
                     Expanded(
                       child: Row(
                         children: [
-                          _CalcButton(label: '1', onTap: onKeyTap),
+                          CalcButton(label: '1', onTap: onKeyTap),
                           const SizedBox(width: gap),
-                          _CalcButton(label: '2', onTap: onKeyTap),
+                          CalcButton(label: '2', onTap: onKeyTap),
                           const SizedBox(width: gap),
-                          _CalcButton(label: '3', onTap: onKeyTap),
+                          CalcButton(label: '3', onTap: onKeyTap),
                           const SizedBox(width: gap),
-                          _CalcButton(label: '+', onTap: onKeyTap, isOp: true),
+                          CalcButton(label: '+', onTap: onKeyTap, isOp: true),
                         ],
                       ),
                     ),
@@ -294,15 +449,15 @@ class _CalculatorTemplatePageState extends State<CalculatorTemplatePage> {
                         children: [
                           Expanded(
                             flex: 2,
-                            child: _CalcButton(label: '0', onTap: onKeyTap),
+                            child: CalcButton(label: '0', onTap: onKeyTap),
                           ),
                           const SizedBox(width: gap),
                           Expanded(
-                            child: _CalcButton(label: '.', onTap: onKeyTap),
+                            child: CalcButton(label: '.', onTap: onKeyTap),
                           ),
                           const SizedBox(width: gap),
                           Expanded(
-                            child: _CalcButton(
+                            child: CalcButton(
                               label: '=',
                               onTap: onKeyTap,
                               isEquals: true,
@@ -322,13 +477,14 @@ class _CalculatorTemplatePageState extends State<CalculatorTemplatePage> {
   }
 }
 
-class _CalcButton extends StatelessWidget {
+class CalcButton extends StatefulWidget {
   final String label;
   final void Function(String) onTap;
   final bool isOp;
   final bool isEquals;
 
-  const _CalcButton({
+  const CalcButton({
+    super.key,
     required this.label,
     required this.onTap,
     this.isOp = false,
@@ -336,30 +492,58 @@ class _CalcButton extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    final bg = isEquals
-        ? Colors.blue
-        : isOp
-            ? Colors.orange
-            : Colors.black12;
+  State<CalcButton> createState() => _CalcButtonState();
+}
 
-    final fg = isEquals || isOp ? Colors.white : Colors.black;
+class _CalcButtonState extends State<CalcButton> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    final Color bg = widget.isEquals
+        ? cs.primary
+        : widget.isOp
+            ? cs.tertiary
+            : cs.surfaceContainerHighest;
+
+    final Color fg = widget.isEquals || widget.isOp ? cs.onPrimary : cs.onSurface;
 
     return Expanded(
       child: GestureDetector(
-        onTap: () => onTap(label),
-        child: Container(
-          decoration: BoxDecoration(
-            color: bg,
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Center(
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.w600,
-                color: fg,
+        onTapDown: (_) => setState(() => _pressed = true),
+        onTapCancel: () => setState(() => _pressed = false),
+        onTapUp: (_) => setState(() => _pressed = false),
+        onTap: () => widget.onTap(widget.label),
+        child: AnimatedScale(
+          scale: _pressed ? 0.94 : 1.0,
+          duration: const Duration(milliseconds: 90),
+          curve: Curves.easeOut,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 90),
+            curve: Curves.easeOut,
+            decoration: BoxDecoration(
+              color: _pressed ? bg.withOpacity(0.85) : bg,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: _pressed
+                  ? []
+                  : [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.10),
+                        blurRadius: 6,
+                        offset: const Offset(0, 3),
+                      ),
+                    ],
+            ),
+            child: Center(
+              child: Text(
+                widget.label,
+                style: TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w600,
+                  color: fg,
+                ),
               ),
             ),
           ),
